@@ -24,7 +24,23 @@ pub struct Config {
     #[arg(long, default_value = "SSH-2.0-OpenSSH_8.9p1 Ubuntu-3ubuntu0.6")]
     pub ssh_banner: String,
 
+    /// Porta do honeypot HTTPS
+    #[arg(long, default_value = "8443")]
+    pub https_port: u16,
+
     /// Banner HTTP falso (header Server)
     #[arg(long, default_value = "Apache/2.4.7 (Ubuntu)")]
     pub http_server: String,
+
+    /// Número de eventos de um mesmo IP para disparar alerta
+    #[arg(long, default_value = "10")]
+    pub alert_threshold: usize,
+
+    /// Janela de tempo em segundos para contagem do threshold
+    #[arg(long, default_value = "60")]
+    pub alert_window: u64,
+
+    /// URL do webhook para envio de alertas (ex: http://localhost:8000/webhook/alert)
+    #[arg(long)]
+    pub webhook_url: Option<String>,
 }

@@ -100,6 +100,7 @@ async fn handle_connection(
         headers,
         body,
         user_agent,
+        protocol_tag: "HTTP".to_string(),
     });
     let _ = tx.send(event);
 

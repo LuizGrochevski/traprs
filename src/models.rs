@@ -42,4 +42,5 @@ pub struct HttpEvent {
     pub headers: HashMap<String, String>,
     pub body: String,
     pub user_agent: String,
+    pub protocol_tag: String,
 }
