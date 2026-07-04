@@ -4,6 +4,7 @@ mod dashboard;
 mod honeypot;
 mod logger;
 mod models;
+mod stats;
 mod webhook;
 
 use clap::Parser;
@@ -40,13 +41,16 @@ async fn main() {
     });
 
     // Logger assíncrono
+    // Imprime stats e encerra se --stats foi passado como flag
+    // (verificamos se há argumento extra; aqui apenas mostramos ao iniciar)
     let log_path = cfg.log.clone();
+    let stats_path = cfg.stats.clone();
     let threshold = cfg.alert_threshold;
     let window = cfg.alert_window;
-    let webhook_url = cfg.webhook_url.clone();
+    let webhook_urls = cfg.webhook_url.clone();
     let blog_tx = broadcast_tx.clone();
     tokio::spawn(async move {
-        logger::run_logger(log_path, rx, threshold, window, webhook_url, blog_tx).await;
+        logger::run_logger(log_path, stats_path, rx, threshold, window, webhook_urls, blog_tx).await;
     });
 
     // Honeypots em paralelo

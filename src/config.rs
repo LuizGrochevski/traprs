@@ -4,7 +4,7 @@ use std::path::PathBuf;
 #[derive(Parser, Debug, Clone)]
 #[command(
     name = "traprs",
-    about = "TrapRS 🪤 — Honeypot TCP em Rust (SSH + HTTP)",
+    about = "TrapRS 🪤 — Honeypot TCP em Rust (SSH + HTTP + HTTPS)",
     version = "0.1.0"
 )]
 pub struct Config {
@@ -16,6 +16,10 @@ pub struct Config {
     #[arg(long, default_value = "8080")]
     pub http_port: u16,
 
+    /// Porta do honeypot HTTPS
+    #[arg(long, default_value = "8443")]
+    pub https_port: u16,
+
     /// Arquivo de log (JSONL)
     #[arg(long, default_value = "logs/events.jsonl")]
     pub log: PathBuf,
@@ -23,10 +27,6 @@ pub struct Config {
     /// Banner SSH falso apresentado aos clientes
     #[arg(long, default_value = "SSH-2.0-OpenSSH_8.9p1 Ubuntu-3ubuntu0.6")]
     pub ssh_banner: String,
-
-    /// Porta do honeypot HTTPS
-    #[arg(long, default_value = "8443")]
-    pub https_port: u16,
 
     /// Banner HTTP falso (header Server)
     #[arg(long, default_value = "Apache/2.4.7 (Ubuntu)")]
@@ -40,11 +40,15 @@ pub struct Config {
     #[arg(long, default_value = "60")]
     pub alert_window: u64,
 
-    /// URL do webhook para envio de alertas (ex: http://localhost:8000/webhook/alert)
+    /// URLs de webhook para envio de alertas (pode passar múltiplos)
     #[arg(long)]
-    pub webhook_url: Option<String>,
+    pub webhook_url: Vec<String>,
 
     /// Porta do dashboard WebSocket
     #[arg(long, default_value = "9000")]
     pub dashboard_port: u16,
+
+    /// Arquivo de persistência de estatísticas
+    #[arg(long, default_value = "logs/stats.json")]
+    pub stats: PathBuf,
 }
