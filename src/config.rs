@@ -43,4 +43,8 @@ pub struct Config {
     /// URL do webhook para envio de alertas (ex: http://localhost:8000/webhook/alert)
     #[arg(long)]
     pub webhook_url: Option<String>,
+
+    /// Porta do dashboard WebSocket
+    #[arg(long, default_value = "9000")]
+    pub dashboard_port: u16,
 }

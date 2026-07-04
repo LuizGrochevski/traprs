@@ -1,4 +1,5 @@
 use crate::alert::ThresholdAlert;
+use crate::dashboard::BroadcastSender;
 use crate::models::HoneypotEvent;
 use crate::webhook::{send_alert, AlertPayload};
 use std::path::PathBuf;
@@ -14,6 +15,7 @@ pub async fn run_logger(
     threshold: usize,
     window_secs: u64,
     webhook_url: Option<String>,
+    broadcast_tx: BroadcastSender,
 ) {
     let mut file = OpenOptions::new()
         .create(true)
@@ -25,13 +27,19 @@ pub async fn run_logger(
     let mut alerter = ThresholdAlert::new(threshold, window_secs);
 
     while let Some(event) = rx.recv().await {
-        let mut line = serde_json::to_string(&event).unwrap_or_default();
+        // Serializa e grava no arquivo
+        let json = serde_json::to_string(&event).unwrap_or_default();
+        let mut line = json.clone();
         line.push('\n');
         if let Err(e) = file.write_all(line.as_bytes()).await {
             eprintln!("Erro ao escrever log: {}", e);
         }
         let _ = file.flush().await;
 
+        // Broadcast pro WebSocket dashboard
+        let _ = broadcast_tx.send(json);
+
+        // Output colorido no terminal
         let (src_ip, protocol) = match &event {
             HoneypotEvent::SSH(e) => {
                 eprintln!("\x1b[33m[SSH]\x1b[0m {} → {:?}", e.src_ip, e.event);
@@ -48,6 +56,7 @@ pub async fn run_logger(
             }
         };
 
+        // Verifica threshold e dispara alerta
         if alerter.record(&src_ip) {
             let count = alerter.count(&src_ip);
             eprintln!(

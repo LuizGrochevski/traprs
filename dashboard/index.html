@@ -1,0 +1,435 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TrapRS Dashboard</title>
+<style>
+  :root {
+    --bg: #0a0a0a;
+    --surface: #111;
+    --border: #222;
+    --green: #00ff88;
+    --yellow: #ffd700;
+    --red: #ff4444;
+    --blue: #4fc3f7;
+    --purple: #ce93d8;
+    --text: #e0e0e0;
+    --dim: #555;
+    --font: 'Courier New', monospace;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font);
+    font-size: 13px;
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+  }
+
+  header {
+    padding: 12px 20px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-shrink: 0;
+  }
+
+  header h1 {
+    font-size: 16px;
+    letter-spacing: 2px;
+    color: var(--green);
+  }
+
+  header h1 span { color: var(--text); }
+
+  #status {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 11px;
+    color: var(--dim);
+  }
+
+  #status-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--dim);
+  }
+
+  #status-dot.connected { background: var(--green); }
+  #status-dot.disconnected { background: var(--red); }
+
+  .stats-bar {
+    display: flex;
+    gap: 0;
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+
+  .stat {
+    flex: 1;
+    padding: 10px 16px;
+    border-right: 1px solid var(--border);
+    text-align: center;
+  }
+
+  .stat:last-child { border-right: none; }
+
+  .stat-value {
+    font-size: 22px;
+    font-weight: bold;
+    color: var(--green);
+  }
+
+  .stat-label {
+    font-size: 10px;
+    color: var(--dim);
+    letter-spacing: 1px;
+    margin-top: 2px;
+  }
+
+  .stat-value.red { color: var(--red); }
+  .stat-value.yellow { color: var(--yellow); }
+  .stat-value.blue { color: var(--blue); }
+  .stat-value.purple { color: var(--purple); }
+
+  main {
+    display: flex;
+    flex: 1;
+    overflow: hidden;
+  }
+
+  #feed {
+    flex: 1;
+    overflow-y: auto;
+    padding: 8px 0;
+    border-right: 1px solid var(--border);
+  }
+
+  .event {
+    display: grid;
+    grid-template-columns: 90px 55px 100px 1fr;
+    gap: 6px;
+    padding: 5px 10px;
+    border-bottom: 1px solid #161616;
+    align-items: start;
+    animation: fadeIn 0.2s ease;
+    min-width: 0;
+  }
+
+  @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+
+  .event:hover { background: #161616; }
+
+  .event.alert {
+    background: rgba(255, 68, 68, 0.08);
+    border-left: 2px solid var(--red);
+  }
+
+  .event-time { color: var(--dim); font-size: 11px; }
+
+  .tag {
+    font-size: 10px;
+    padding: 2px 6px;
+    border-radius: 3px;
+    font-weight: bold;
+    text-align: center;
+    width: fit-content;
+  }
+
+  .tag.SSH { background: rgba(255,215,0,0.15); color: var(--yellow); }
+  .tag.HTTP { background: rgba(79,195,247,0.15); color: var(--blue); }
+  .tag.HTTPS { background: rgba(206,147,216,0.15); color: var(--purple); }
+  .tag.ALERT { background: rgba(255,68,68,0.15); color: var(--red); }
+
+  .event-ip { color: var(--green); }
+  .event-detail { color: var(--text); word-break: break-all; }
+  .event-detail .method { color: var(--yellow); margin-right: 6px; }
+  .event-detail .path { color: var(--text); }
+  .event-detail .kind { color: var(--dim); }
+
+  #sidebar {
+    width: 180px;
+    overflow-y: auto;
+    padding: 8px;
+    flex-shrink: 0;
+  }
+
+  @media (max-width: 600px) {
+    #sidebar { display: none; }
+    .event { grid-template-columns: 75px 45px 90px 1fr; font-size: 11px; }
+  }
+
+  #sidebar h3 {
+    font-size: 10px;
+    letter-spacing: 1px;
+    color: var(--dim);
+    margin-bottom: 8px;
+    margin-top: 12px;
+  }
+
+  #sidebar h3:first-child { margin-top: 0; }
+
+  .ip-row {
+    display: flex;
+    justify-content: space-between;
+    padding: 4px 0;
+    border-bottom: 1px solid #161616;
+    font-size: 11px;
+  }
+
+  .ip-row .ip { color: var(--green); }
+  .ip-row .count { color: var(--dim); }
+
+  .path-row {
+    display: flex;
+    justify-content: space-between;
+    padding: 4px 0;
+    border-bottom: 1px solid #161616;
+    font-size: 11px;
+  }
+
+  .path-row .path { color: var(--blue); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 150px; }
+  .path-row .count { color: var(--dim); flex-shrink: 0; }
+
+  #controls {
+    padding: 8px 16px;
+    border-top: 1px solid var(--border);
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    flex-shrink: 0;
+  }
+
+  button {
+    background: none;
+    border: 1px solid var(--border);
+    color: var(--dim);
+    padding: 4px 10px;
+    font-family: var(--font);
+    font-size: 11px;
+    cursor: pointer;
+    border-radius: 3px;
+  }
+
+  button:hover { border-color: var(--green); color: var(--green); }
+  button.active { border-color: var(--green); color: var(--green); }
+
+  #ws-url {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 4px 8px;
+    font-family: var(--font);
+    font-size: 11px;
+    border-radius: 3px;
+    width: 220px;
+  }
+
+  #empty {
+    padding: 40px;
+    text-align: center;
+    color: var(--dim);
+    font-size: 12px;
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>🪤 TRAP<span>RS</span> // DASHBOARD</h1>
+  <div id="status">
+    <div id="status-dot" class="disconnected"></div>
+    <span id="status-text">desconectado</span>
+  </div>
+</header>
+
+<div class="stats-bar">
+  <div class="stat">
+    <div class="stat-value" id="total">0</div>
+    <div class="stat-label">TOTAL EVENTOS</div>
+  </div>
+  <div class="stat">
+    <div class="stat-value yellow" id="ssh-count">0</div>
+    <div class="stat-label">SSH</div>
+  </div>
+  <div class="stat">
+    <div class="stat-value blue" id="http-count">0</div>
+    <div class="stat-label">HTTP</div>
+  </div>
+  <div class="stat">
+    <div class="stat-value purple" id="https-count">0</div>
+    <div class="stat-label">HTTPS</div>
+  </div>
+  <div class="stat">
+    <div class="stat-value red" id="alert-count">0</div>
+    <div class="stat-label">ALERTAS</div>
+  </div>
+</div>
+
+<main>
+  <div id="feed">
+    <div id="empty">aguardando eventos...</div>
+  </div>
+  <div id="sidebar">
+    <h3>TOP IPs</h3>
+    <div id="top-ips"></div>
+    <h3>TOP PATHS</h3>
+    <div id="top-paths"></div>
+  </div>
+</main>
+
+<div id="controls">
+  <input id="ws-url" type="text" value="ws://127.0.0.1:9000" />
+  <button id="btn-connect" class="active" onclick="connect()">conectar</button>
+  <button onclick="clearFeed()">limpar</button>
+  <button id="btn-pause" onclick="togglePause()">pausar</button>
+</div>
+
+<script>
+let ws = null;
+let paused = false;
+let stats = { total: 0, ssh: 0, http: 0, https: 0, alerts: 0 };
+let ipCounts = {};
+let pathCounts = {};
+const MAX_EVENTS = 200;
+
+function connect() {
+  const url = document.getElementById('ws-url').value;
+  if (ws) ws.close();
+
+  ws = new WebSocket(url);
+
+  ws.onopen = () => {
+    setStatus(true);
+    document.getElementById('btn-connect').textContent = 'reconectar';
+  };
+
+  ws.onmessage = (e) => {
+    if (paused) return;
+    try {
+      const event = JSON.parse(e.data);
+      addEvent(event);
+    } catch {}
+  };
+
+  ws.onclose = () => setStatus(false);
+  ws.onerror = () => setStatus(false);
+}
+
+function setStatus(connected) {
+  const dot = document.getElementById('status-dot');
+  const text = document.getElementById('status-text');
+  dot.className = connected ? 'connected' : 'disconnected';
+  text.textContent = connected ? 'conectado' : 'desconectado';
+}
+
+function addEvent(ev) {
+  const feed = document.getElementById('feed');
+  const empty = document.getElementById('empty');
+  if (empty) empty.remove();
+
+  stats.total++;
+  document.getElementById('total').textContent = stats.total;
+
+  const protocol = ev.protocol;
+  const tag = ev.protocol_tag || protocol;
+  const time = new Date(ev.timestamp || ev.received_at || Date.now()).toLocaleTimeString();
+  const ip = ev.src_ip || '?';
+
+  // Contagem por protocolo
+  if (protocol === 'SSH') { stats.ssh++; document.getElementById('ssh-count').textContent = stats.ssh; }
+  else if (tag === 'HTTPS') { stats.https++; document.getElementById('https-count').textContent = stats.https; }
+  else if (tag === 'HTTP') { stats.http++; document.getElementById('http-count').textContent = stats.http; }
+
+  // Contagem de IPs
+  ipCounts[ip] = (ipCounts[ip] || 0) + 1;
+  updateTopIPs();
+
+  // Detalhe do evento
+  let detail = '';
+  let isAlert = false;
+
+  if (protocol === 'SSH') {
+    const kind = ev.event?.kind || '';
+    const user = ev.event?.username || '';
+    const pass = ev.event?.password || '';
+    if (kind === 'auth_attempt') {
+      detail = `<span class="kind">auth</span> ${user}${pass ? ':' + pass : ''}`;
+    } else {
+      detail = `<span class="kind">${kind}</span> ${ev.client_banner || ''}`;
+    }
+  } else {
+    const method = ev.method || '';
+    const path = ev.path || '';
+    const query = ev.query ? '?' + ev.query : '';
+    if (method === 'TLS_HANDSHAKE_FAILED') {
+      detail = `<span class="kind">TLS handshake failed</span>`;
+    } else {
+      detail = `<span class="method">${method}</span><span class="path">${path}${query}</span>`;
+      pathCounts[path] = (pathCounts[path] || 0) + 1;
+      updateTopPaths();
+    }
+  }
+
+  // Cria linha do evento
+  const row = document.createElement('div');
+  row.className = 'event' + (isAlert ? ' alert' : '');
+  row.innerHTML = `
+    <span class="event-time">${time}</span>
+    <span class="tag ${tag}">${tag}</span>
+    <span class="event-ip">${ip}</span>
+    <span class="event-detail">${detail}</span>
+  `;
+
+  feed.insertBefore(row, feed.firstChild);
+
+  // Limita número de eventos no DOM
+  const rows = feed.querySelectorAll('.event');
+  if (rows.length > MAX_EVENTS) rows[rows.length - 1].remove();
+}
+
+function updateTopIPs() {
+  const sorted = Object.entries(ipCounts).sort((a,b) => b[1]-a[1]).slice(0,8);
+  document.getElementById('top-ips').innerHTML = sorted.map(([ip, n]) =>
+    `<div class="ip-row"><span class="ip">${ip}</span><span class="count">${n}</span></div>`
+  ).join('');
+}
+
+function updateTopPaths() {
+  const sorted = Object.entries(pathCounts).sort((a,b) => b[1]-a[1]).slice(0,8);
+  document.getElementById('top-paths').innerHTML = sorted.map(([path, n]) =>
+    `<div class="path-row"><span class="path">${path}</span><span class="count">${n}</span></div>`
+  ).join('');
+}
+
+function clearFeed() {
+  const feed = document.getElementById('feed');
+  feed.innerHTML = '<div id="empty">aguardando eventos...</div>';
+  stats = { total: 0, ssh: 0, http: 0, https: 0, alerts: 0 };
+  ipCounts = {}; pathCounts = {};
+  ['total','ssh-count','http-count','https-count','alert-count'].forEach(id => {
+    document.getElementById(id).textContent = '0';
+  });
+  document.getElementById('top-ips').innerHTML = '';
+  document.getElementById('top-paths').innerHTML = '';
+}
+
+function togglePause() {
+  paused = !paused;
+  document.getElementById('btn-pause').textContent = paused ? 'retomar' : 'pausar';
+  document.getElementById('btn-pause').className = paused ? 'active' : '';
+}
+
+// Conecta automaticamente ao abrir
+connect();
+</script>
+</body>
+</html>
