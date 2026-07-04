@@ -5,7 +5,7 @@
 ![Platform](https://img.shields.io/badge/Platform-Linux%20%7C%20Android%20(Termux)-green?style=for-the-badge)
 ![License](https://img.shields.io/badge/License-Educational-orange?style=for-the-badge)
 
-TrapRS é um honeypot TCP desenvolvido em **Rust** com foco em detecção de reconhecimento e captura de credenciais. Simula simultaneamente servidores **SSH** (OpenSSH), **HTTP** (Apache) e **HTTPS** (Apache com TLS), registrando em log estruturado JSONL tudo que atacantes e scanners enviam. Dispara alertas em tempo real quando um IP atinge um threshold configurável, com integração via webhook para a **[Netwatch-API](https://github.com/LuizGrochevski/netwatch-api)**, dashboard web ao vivo via WebSocket e persistência de estatísticas em JSON.
+TrapRS é um honeypot TCP desenvolvido em **Rust** com foco em detecção de reconhecimento e captura de credenciais. Simula simultaneamente servidores **SSH** (OpenSSH), **HTTP** (Apache) e **HTTPS** (Apache com TLS), registrando em log estruturado JSONL tudo que atacantes e scanners enviam. Dispara alertas em tempo real quando um IP atinge um threshold configurável, com integração via webhook para a **[Netwatch-API](https://github.com/LuizGrochevski/netwatch-api)**, dashboard web ao vivo via WebSocket, persistência de estatísticas em JSON e alertas via **Telegram**.
 
 Complementa o pipeline de auditoria formado por **[Sentinel-RS](https://github.com/LuizGrochevski/Sentinel-RS)** e **[Netwatch-API](https://github.com/LuizGrochevski/netwatch-api)** — enquanto o Sentinel-RS detecta serviços na rede, o TrapRS detecta quem está tentando escanear ou invadir você.
 
@@ -27,11 +27,12 @@ Complementa o pipeline de auditoria formado por **[Sentinel-RS](https://github.c
 - 🔒 **Honeypot HTTPS** — certificado TLS autoassinado gerado em runtime via `rcgen`, captura tudo que o HTTP captura mais handshake TLS e clientes que falham no TLS
 - ⚠️ **Alertas por threshold** — quando um IP dispara N eventos em X segundos, alerta vermelho no terminal em tempo real
 - 🔗 **Múltiplos webhooks** — alertas enviados em paralelo para quantos endpoints quiser via `--webhook-url`
+- 📱 **Alertas via Telegram** — receba notificações no celular em tempo real quando um ataque é detectado
 - 📊 **Dashboard web em tempo real** — interface HTML/JS conectada via WebSocket, mostra feed de eventos ao vivo, top IPs, top paths e contadores por protocolo
 - 💾 **Persistência de estatísticas** — salva top IPs, top paths e credenciais SSH mais tentadas em JSON a cada 10 eventos e ao encerrar
 - 📋 **Log estruturado em JSONL** — um evento JSON por linha, fácil de processar com `jq`
 - 🎨 **Output colorido em tempo real** no terminal
-- ⚙️ **CLI totalmente configurável** — portas, banners falsos, log path, threshold, webhooks, dashboard e stats
+- ⚙️ **CLI totalmente configurável** — portas, banners falsos, log path, threshold, webhooks, Telegram, dashboard e stats
 - 📱 Compatível com **Termux (Android/ARM)** e **Linux**
 
 ---
@@ -52,7 +53,8 @@ Logger assíncrono (mpsc channel)
     ├── logs/stats.json            (estatísticas persistidas)
     ├── Output colorido no terminal
     ├── ThresholdAlert
-    │       └── send_all() → POST /webhook/alert (múltiplos endpoints em paralelo)
+    │       ├── send_all() → POST /webhook/alert (múltiplos endpoints)
+    │       └── Telegram Bot API → mensagem no celular
     └── broadcast (WebSocket)
             │
             ▼
@@ -70,7 +72,7 @@ Logger assíncrono (mpsc channel)
 | tokio-rustls | TLS assíncrono para o honeypot HTTPS |
 | tokio-tungstenite | Servidor WebSocket para o dashboard |
 | rcgen | Geração de certificado autoassinado em runtime |
-| reqwest | Cliente HTTP para envio de webhooks |
+| reqwest | Cliente HTTP para webhooks e Telegram |
 | serde / serde_json | Serialização dos eventos e estatísticas em JSON |
 | chrono | Timestamps UTC precisos |
 | clap | CLI com argumentos configuráveis |
@@ -102,7 +104,7 @@ ANDROID_API_LEVEL=24 cargo build --release
 # Básico (Termux)
 ./target/release/traprs --ssh-port 2222 --http-port 8080 --https-port 8443
 
-# Completo: dashboard, alertas, múltiplos webhooks e stats
+# Completo: dashboard, alertas, webhooks, Telegram e stats
 ./target/release/traprs \
   --ssh-port 2222 \
   --http-port 8080 \
@@ -112,6 +114,8 @@ ANDROID_API_LEVEL=24 cargo build --release
   --alert-window 60 \
   --webhook-url http://localhost:8000/webhook/alert \
   --webhook-url http://outro-servidor/webhook \
+  --telegram-token SEU_TOKEN_DO_BOT \
+  --telegram-chat-id SEU_CHAT_ID \
   --stats logs/stats.json
 
 # Linux (portas reais, requer root)
@@ -124,9 +128,24 @@ cd dashboard && python3 -m http.server 7777
 # Acesse http://localhost:7777
 ```
 
-**Estatísticas salvas:**
-```bash
-cat logs/stats.json
+---
+
+## 📱 Configurando alertas no Telegram
+
+1. Abra o Telegram e busque por `@BotFather`
+2. Mande `/newbot` e siga as instruções para criar seu bot
+3. Copie o **token** gerado (formato: `123456789:AAHxxxxxxxxxxxxx`)
+4. Mande qualquer mensagem para o bot que você criou
+5. Acesse `https://api.telegram.org/botSEU_TOKEN/getUpdates` e copie o `chat.id`
+6. Rode o TrapRS com `--telegram-token` e `--telegram-chat-id`
+
+**Exemplo de alerta recebido no Telegram:**
+```
+🪤 TrapRS ALERTA
+
+🔴 IP: 1.2.3.4
+📊 Eventos: 10 em 60s
+🌐 Protocolo: HTTP
 ```
 
 ---
@@ -149,7 +168,7 @@ cat logs/stats.json
 [HTTP] 1.2.3.4 GET /admin
 [⚠️  ALERTA] IP 1.2.3.4 disparou 3 eventos em 10s!
 [WEBHOOK] Alerta enviado → http://localhost:8000/webhook/alert (status: 200 OK)
-[WEBHOOK] Alerta enviado → http://outro-servidor/webhook (status: 200 OK)
+[TELEGRAM] Alerta enviado para chat 940237849
 [SSH] 1.2.3.4 → AuthAttempt { username: "root", password: Some("123456"), method: "password" }
 ```
 
@@ -208,13 +227,14 @@ cat logs/events.jsonl | jq -r 'select(.protocol == "HTTP") | .path' | sort | uni
 ```
 TrapRS (honeypot detecta ataque)
     │
-    └── POST /webhook/alert (múltiplos endpoints em paralelo)
+    ├── POST /webhook/alert (múltiplos endpoints em paralelo)
+    └── Telegram Bot API (notificação no celular)
             │
             ▼
     Netwatch-API (loga e pode encadear com scan ou CVE lookup)
 ```
 
-Payload enviado:
+Payload do webhook:
 ```json
 {
   "src_ip": "1.2.3.4",
@@ -238,8 +258,8 @@ Payload enviado:
 - [x] Múltiplos webhooks em paralelo
 - [x] Dashboard web em tempo real via WebSocket
 - [x] Persistência de estatísticas (top IPs, paths, credenciais)
+- [x] Alertas via Telegram
 - [x] Compatível com Termux e Linux
-- [ ] Alertas por e-mail ou Telegram
 
 ---
 
