@@ -5,6 +5,7 @@ mod honeypot;
 mod logger;
 mod models;
 mod stats;
+mod telegram;
 mod webhook;
 
 use clap::Parser;
@@ -48,9 +49,11 @@ async fn main() {
     let threshold = cfg.alert_threshold;
     let window = cfg.alert_window;
     let webhook_urls = cfg.webhook_url.clone();
+    let telegram_token = cfg.telegram_token.clone();
+    let telegram_chat_id = cfg.telegram_chat_id.clone();
     let blog_tx = broadcast_tx.clone();
     tokio::spawn(async move {
-        logger::run_logger(log_path, stats_path, rx, threshold, window, webhook_urls, blog_tx).await;
+        logger::run_logger(log_path, stats_path, rx, threshold, window, webhook_urls, telegram_token, telegram_chat_id, blog_tx).await;
     });
 
     // Honeypots em paralelo

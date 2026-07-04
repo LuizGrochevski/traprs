@@ -2,6 +2,7 @@ use crate::alert::ThresholdAlert;
 use crate::dashboard::BroadcastSender;
 use crate::models::HoneypotEvent;
 use crate::stats;
+use crate::telegram;
 use crate::webhook::{send_all, AlertPayload};
 use std::path::PathBuf;
 use tokio::fs::OpenOptions;
@@ -17,6 +18,8 @@ pub async fn run_logger(
     threshold: usize,
     window_secs: u64,
     webhook_urls: Vec<String>,
+    telegram_token: Option<String>,
+    telegram_chat_id: Option<String>,
     broadcast_tx: BroadcastSender,
 ) {
     let mut file = OpenOptions::new()
@@ -85,6 +88,14 @@ pub async fn run_logger(
                 let urls = webhook_urls.clone();
                 tokio::spawn(async move {
                     send_all(&urls, payload).await;
+                });
+            }
+
+            if let (Some(token), Some(chat_id)) = (telegram_token.clone(), telegram_chat_id.clone()) {
+                let ip = src_ip.clone();
+                let proto = protocol.clone();
+                tokio::spawn(async move {
+                    telegram::send_alert(&token, &chat_id, &ip, count, window_secs, &proto).await;
                 });
             }
         }

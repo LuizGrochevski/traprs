@@ -51,4 +51,12 @@ pub struct Config {
     /// Arquivo de persistência de estatísticas
     #[arg(long, default_value = "logs/stats.json")]
     pub stats: PathBuf,
+
+    /// Token do bot do Telegram para alertas
+    #[arg(long)]
+    pub telegram_token: Option<String>,
+
+    /// Chat ID do Telegram para receber alertas
+    #[arg(long)]
+    pub telegram_chat_id: Option<String>,
 }
