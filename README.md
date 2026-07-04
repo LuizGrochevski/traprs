@@ -5,7 +5,7 @@
 ![Platform](https://img.shields.io/badge/Platform-Linux%20%7C%20Android%20(Termux)-green?style=for-the-badge)
 ![License](https://img.shields.io/badge/License-Educational-orange?style=for-the-badge)
 
-TrapRS é um honeypot TCP desenvolvido em **Rust** com foco em detecção de reconhecimento e captura de credenciais. Simula simultaneamente servidores **SSH** (OpenSSH), **HTTP** (Apache) e **HTTPS** (Apache com TLS), registrando em log estruturado JSONL tudo que atacantes e scanners enviam — banners, headers, queries, payloads e tentativas de autenticação. Dispara alertas em tempo real quando um IP atinge um threshold configurável de eventos, com integração via webhook para a **[Netwatch-API](https://github.com/LuizGrochevski/netwatch-api)**.
+TrapRS é um honeypot TCP desenvolvido em **Rust** com foco em detecção de reconhecimento e captura de credenciais. Simula simultaneamente servidores **SSH** (OpenSSH), **HTTP** (Apache) e **HTTPS** (Apache com TLS), registrando em log estruturado JSONL tudo que atacantes e scanners enviam. Dispara alertas em tempo real quando um IP atinge um threshold configurável, com integração via webhook para a **[Netwatch-API](https://github.com/LuizGrochevski/netwatch-api)**, dashboard web ao vivo via WebSocket e persistência de estatísticas em JSON.
 
 Complementa o pipeline de auditoria formado por **[Sentinel-RS](https://github.com/LuizGrochevski/Sentinel-RS)** e **[Netwatch-API](https://github.com/LuizGrochevski/netwatch-api)** — enquanto o Sentinel-RS detecta serviços na rede, o TrapRS detecta quem está tentando escanear ou invadir você.
 
@@ -24,14 +24,14 @@ Complementa o pipeline de auditoria formado por **[Sentinel-RS](https://github.c
   - Todos os headers (User-Agent, Authorization, Referer, etc)
   - Body da requisição (até 4KB)
   - Versão do protocolo HTTP
-- 🔒 **Honeypot HTTPS** — certificado TLS autoassinado gerado em runtime via `rcgen`, captura tudo que o HTTP captura mais:
-  - Handshake TLS (versão, cipher suite)
-  - Clientes que falham no handshake (scanners agressivos)
+- 🔒 **Honeypot HTTPS** — certificado TLS autoassinado gerado em runtime via `rcgen`, captura tudo que o HTTP captura mais handshake TLS e clientes que falham no TLS
 - ⚠️ **Alertas por threshold** — quando um IP dispara N eventos em X segundos, alerta vermelho no terminal em tempo real
-- 🔗 **Webhook para Netwatch-API** — alertas enviados automaticamente via POST quando threshold é atingido
-- 📋 **Log estruturado em JSONL** — um evento JSON por linha, fácil de processar com `jq` ou ingestão em SIEM
+- 🔗 **Múltiplos webhooks** — alertas enviados em paralelo para quantos endpoints quiser via `--webhook-url`
+- 📊 **Dashboard web em tempo real** — interface HTML/JS conectada via WebSocket, mostra feed de eventos ao vivo, top IPs, top paths e contadores por protocolo
+- 💾 **Persistência de estatísticas** — salva top IPs, top paths e credenciais SSH mais tentadas em JSON a cada 10 eventos e ao encerrar
+- 📋 **Log estruturado em JSONL** — um evento JSON por linha, fácil de processar com `jq`
 - 🎨 **Output colorido em tempo real** no terminal
-- ⚙️ **CLI totalmente configurável** — portas, banners falsos, log path, threshold e webhook via argumentos
+- ⚙️ **CLI totalmente configurável** — portas, banners falsos, log path, threshold, webhooks, dashboard e stats
 - 📱 Compatível com **Termux (Android/ARM)** e **Linux**
 
 ---
@@ -42,27 +42,21 @@ Complementa o pipeline de auditoria formado por **[Sentinel-RS](https://github.c
 Atacante/Scanner
     │
     ├── TCP :2222  → Honeypot SSH
-    │       ├── Captura banner do cliente
-    │       ├── Lê payload bruto do handshake
-    │       └── Extrai tentativas de auth
-    │
     ├── TCP :8080  → Honeypot HTTP
-    │       ├── Parseia request line, headers e body
-    │       └── Responde com página Apache falsa convincente
-    │
-    └── TCP :8443  → Honeypot HTTPS
-            ├── TLS autoassinado gerado em runtime (rcgen)
-            ├── Captura handshake e requests completas
-            └── Loga clientes que falham no TLS
+    └── TCP :8443  → Honeypot HTTPS (TLS autoassinado)
     │
     ▼
 Logger assíncrono (mpsc channel)
     │
-    ├── logs/events.jsonl (JSONL estruturado)
-    │
-    └── ThresholdAlert (contagem por IP por janela de tempo)
+    ├── logs/events.jsonl          (log JSONL)
+    ├── logs/stats.json            (estatísticas persistidas)
+    ├── Output colorido no terminal
+    ├── ThresholdAlert
+    │       └── send_all() → POST /webhook/alert (múltiplos endpoints em paralelo)
+    └── broadcast (WebSocket)
             │
-            └── Webhook → Netwatch-API /webhook/alert
+            ▼
+    Dashboard web (ws://:9000)
 ```
 
 ---
@@ -74,12 +68,12 @@ Logger assíncrono (mpsc channel)
 | Rust | Linguagem principal |
 | Tokio | Runtime assíncrono (listeners paralelos) |
 | tokio-rustls | TLS assíncrono para o honeypot HTTPS |
+| tokio-tungstenite | Servidor WebSocket para o dashboard |
 | rcgen | Geração de certificado autoassinado em runtime |
 | reqwest | Cliente HTTP para envio de webhooks |
-| serde / serde_json | Serialização dos eventos em JSON |
+| serde / serde_json | Serialização dos eventos e estatísticas em JSON |
 | chrono | Timestamps UTC precisos |
 | clap | CLI com argumentos configuráveis |
-| tracing | Structured logging interno |
 
 ---
 
@@ -105,29 +99,34 @@ ANDROID_API_LEVEL=24 cargo build --release
 ## 📄 Uso
 
 ```bash
-# Termux (portas não privilegiadas)
+# Básico (Termux)
 ./target/release/traprs --ssh-port 2222 --http-port 8080 --https-port 8443
+
+# Completo: dashboard, alertas, múltiplos webhooks e stats
+./target/release/traprs \
+  --ssh-port 2222 \
+  --http-port 8080 \
+  --https-port 8443 \
+  --dashboard-port 9000 \
+  --alert-threshold 10 \
+  --alert-window 60 \
+  --webhook-url http://localhost:8000/webhook/alert \
+  --webhook-url http://outro-servidor/webhook \
+  --stats logs/stats.json
 
 # Linux (portas reais, requer root)
 sudo ./target/release/traprs --ssh-port 22 --http-port 80 --https-port 443
+```
 
-# Com alertas e webhook para Netwatch-API
-./target/release/traprs \
-  --ssh-port 2222 \
-  --http-port 8080 \
-  --https-port 8443 \
-  --alert-threshold 10 \
-  --alert-window 60 \
-  --webhook-url http://localhost:8000/webhook/alert
+**Dashboard:** abra `dashboard/index.html` num servidor HTTP local:
+```bash
+cd dashboard && python3 -m http.server 7777
+# Acesse http://localhost:7777
+```
 
-# Customizando banners e log
-./target/release/traprs \
-  --ssh-port 2222 \
-  --http-port 8080 \
-  --https-port 8443 \
-  --ssh-banner "SSH-2.0-OpenSSH_7.4p1 Debian-10+deb9u7" \
-  --http-server "nginx/1.14.0 (Ubuntu)" \
-  --log /var/log/traprs/events.jsonl
+**Estatísticas salvas:**
+```bash
+cat logs/stats.json
 ```
 
 ---
@@ -136,85 +135,86 @@ sudo ./target/release/traprs --ssh-port 22 --http-port 80 --https-port 443
 
 ```
 🪤 TrapRS iniciado!
-   SSH   → porta 2222
-   HTTP  → porta 8080
-   HTTPS → porta 8443
-   Log   → logs/events.jsonl
+   SSH       → porta 2222
+   HTTP      → porta 8080
+   HTTPS     → porta 8443
+   Dashboard → ws://0.0.0.0:9000
+   Log       → logs/events.jsonl
 [SSH] Honeypot escutando em 0.0.0.0:2222
 [HTTP] Honeypot escutando em 0.0.0.0:8080
 [HTTPS] Honeypot escutando em 0.0.0.0:8443
-[HTTP] 1.2.3.4 GET /admin
+[DASH] Dashboard WebSocket em ws://0.0.0.0:9000
 [HTTP] 1.2.3.4 GET /wp-login.php
 [HTTP] 1.2.3.4 GET /.env
+[HTTP] 1.2.3.4 GET /admin
 [⚠️  ALERTA] IP 1.2.3.4 disparou 3 eventos em 10s!
 [WEBHOOK] Alerta enviado → http://localhost:8000/webhook/alert (status: 200 OK)
+[WEBHOOK] Alerta enviado → http://outro-servidor/webhook (status: 200 OK)
 [SSH] 1.2.3.4 → AuthAttempt { username: "root", password: Some("123456"), method: "password" }
 ```
 
 ---
 
-## 📋 Exemplo de log (JSONL)
+## 📋 Exemplo de log e estatísticas
 
-**Evento HTTP:**
+**Evento HTTP (JSONL):**
 ```json
 {
   "protocol": "HTTP",
-  "timestamp": "2026-07-02T21:00:00.000Z",
+  "timestamp": "2026-07-04T02:00:00.000Z",
   "src_ip": "1.2.3.4",
   "src_port": 46228,
   "method": "GET",
   "path": "/admin",
-  "query": "user=teste",
+  "query": "",
   "http_version": "HTTP/1.1",
-  "headers": {
-    "host": "127.0.0.1:8080",
-    "user-agent": "curl/8.20.0",
-    "accept": "*/*"
-  },
+  "headers": { "user-agent": "masscan/1.0" },
   "body": "",
-  "user_agent": "curl/8.20.0",
+  "user_agent": "masscan/1.0",
   "protocol_tag": "HTTP"
 }
 ```
 
-**Evento SSH:**
+**Estatísticas persistidas (stats.json):**
 ```json
 {
-  "protocol": "SSH",
-  "timestamp": "2026-07-02T21:00:01.000Z",
-  "src_ip": "1.2.3.4",
-  "src_port": 57768,
-  "event": {
-    "kind": "auth_attempt",
-    "username": "root",
-    "password": "123456",
-    "method": "password"
-  },
-  "client_banner": "SSH-2.0-OpenSSH_7.4"
+  "total_events": 150,
+  "ssh_events": 30,
+  "http_events": 110,
+  "https_events": 10,
+  "alerts": 8,
+  "top_ips": { "1.2.3.4": 95, "5.6.7.8": 55 },
+  "top_paths": { "/admin": 40, "/wp-login.php": 35, "/.env": 20 },
+  "top_credentials": { "root:123456": 12, "admin:admin": 8 }
 }
 ```
 
 **Processando com jq:**
 ```bash
-# Ver só tentativas de autenticação SSH
-cat logs/events.jsonl | jq 'select(.protocol == "SSH" and .event.kind == "auth_attempt")'
-
-# Ver só requisições HTTP suspeitas
-cat logs/events.jsonl | jq 'select(.protocol == "HTTP" and (.path | contains("/admin") or contains("/wp-login")))'
-
-# Top IPs por número de eventos
+# Top IPs
 cat logs/events.jsonl | jq -r '.src_ip' | sort | uniq -c | sort -rn | head -10
 
-# Credenciais mais tentadas no SSH
-cat logs/events.jsonl | jq 'select(.event.kind == "auth_attempt") | "\(.event.username):\(.event.password)"' | sort | uniq -c | sort -rn
+# Credenciais SSH tentadas
+cat logs/events.jsonl | jq 'select(.event.kind == "auth_attempt") | "\(.event.username):\(.event.password)"'
+
+# Paths HTTP mais atacados
+cat logs/events.jsonl | jq -r 'select(.protocol == "HTTP") | .path' | sort | uniq -c | sort -rn
 ```
 
 ---
 
 ## 🔗 Integração com Netwatch-API
 
-Quando um IP atinge o threshold de alertas, o TrapRS envia automaticamente um POST para o endpoint `/webhook/alert` da Netwatch-API:
+```
+TrapRS (honeypot detecta ataque)
+    │
+    └── POST /webhook/alert (múltiplos endpoints em paralelo)
+            │
+            ▼
+    Netwatch-API (loga e pode encadear com scan ou CVE lookup)
+```
 
+Payload enviado:
 ```json
 {
   "src_ip": "1.2.3.4",
@@ -222,15 +222,6 @@ Quando um IP atinge o threshold de alertas, o TrapRS envia automaticamente um PO
   "window_secs": 60,
   "protocol": "HTTP"
 }
-```
-
-```
-TrapRS (honeypot detecta ataque)
-    │
-    └── POST /webhook/alert
-            │
-            ▼
-    Netwatch-API (loga e pode encadear com scan ou CVE lookup)
 ```
 
 ---
@@ -244,11 +235,10 @@ TrapRS (honeypot detecta ataque)
 - [x] Output colorido em tempo real
 - [x] CLI configurável (portas, banners, log path)
 - [x] Alertas por threshold (N eventos em X segundos)
-- [x] Webhook para Netwatch-API
+- [x] Múltiplos webhooks em paralelo
+- [x] Dashboard web em tempo real via WebSocket
+- [x] Persistência de estatísticas (top IPs, paths, credenciais)
 - [x] Compatível com Termux e Linux
-- [ ] Dashboard de eventos em tempo real
-- [ ] Persistência de estatísticas (top IPs, paths, credenciais)
-- [ ] Suporte a múltiplos webhooks simultâneos
 - [ ] Alertas por e-mail ou Telegram
 
 ---
