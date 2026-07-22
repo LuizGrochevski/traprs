@@ -7,7 +7,7 @@ use crate::webhook::{send_all, AlertPayload};
 use std::path::PathBuf;
 use tokio::fs::OpenOptions;
 use tokio::io::AsyncWriteExt;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, oneshot};
 
 pub type LogSender = mpsc::UnboundedSender<HoneypotEvent>;
 
@@ -21,6 +21,7 @@ pub async fn run_logger(
     telegram_token: Option<String>,
     telegram_chat_id: Option<String>,
     broadcast_tx: BroadcastSender,
+    mut shutdown_rx: oneshot::Receiver<()>,
 ) {
     let mut file = OpenOptions::new()
         .create(true)
@@ -33,74 +34,87 @@ pub async fn run_logger(
     let mut st = stats::load(&stats_path).await;
     let mut events_since_save = 0u64;
 
-    while let Some(event) = rx.recv().await {
-        let json = serde_json::to_string(&event).unwrap_or_default();
-        let mut line = json.clone();
-        line.push('\n');
-        if let Err(e) = file.write_all(line.as_bytes()).await {
-            eprintln!("Erro ao escrever log: {}", e);
-        }
-        let _ = file.flush().await;
-        let _ = broadcast_tx.send(json);
+    loop {
+        tokio::select! {
+            biased;
 
-        let (src_ip, protocol) = match &event {
-            HoneypotEvent::SSH(e) => {
-                eprintln!("\x1b[33m[SSH]\x1b[0m {} → {:?}", e.src_ip, e.event);
-                let (user, pass) = match &e.event {
-                    crate::models::SshEventKind::AuthAttempt { username, password, .. } => {
-                        (Some(username.as_str()), password.as_deref())
+            _ = &mut shutdown_rx => {
+                break;
+            }
+
+            maybe_event = rx.recv() => {
+                let Some(event) = maybe_event else { break };
+
+                let json = serde_json::to_string(&event).unwrap_or_default();
+                let mut line = json.clone();
+                line.push('\n');
+                if let Err(e) = file.write_all(line.as_bytes()).await {
+                    eprintln!("Erro ao escrever log: {}", e);
+                }
+                let _ = file.flush().await;
+                let _ = broadcast_tx.send(json);
+
+                let (src_ip, protocol) = match &event {
+                    HoneypotEvent::SSH(e) => {
+                        eprintln!("\x1b[33m[SSH]\x1b[0m {} → {:?}", e.src_ip, e.event);
+                        let (user, pass) = match &e.event {
+                            crate::models::SshEventKind::AuthAttempt { username, password, .. } => {
+                                (Some(username.as_str()), password.as_deref())
+                            }
+                            _ => (None, None),
+                        };
+                        st.record_ssh(&e.src_ip, user, pass);
+                        (e.src_ip.clone(), "SSH".to_string())
                     }
-                    _ => (None, None),
+                    HoneypotEvent::HTTP(e) => {
+                        let tag = &e.protocol_tag;
+                        let color = if tag == "HTTPS" { "\x1b[35m" } else { "\x1b[36m" };
+                        eprintln!("{}[{}]\x1b[0m {} {} {}", color, tag, e.src_ip, e.method, e.path);
+                        st.record_http(&e.src_ip, &e.path, tag);
+                        (e.src_ip.clone(), tag.clone())
+                    }
                 };
-                st.record_ssh(&e.src_ip, user, pass);
-                (e.src_ip.clone(), "SSH".to_string())
-            }
-            HoneypotEvent::HTTP(e) => {
-                let tag = &e.protocol_tag;
-                let color = if tag == "HTTPS" { "\x1b[35m" } else { "\x1b[36m" };
-                eprintln!("{}[{}]\x1b[0m {} {} {}", color, tag, e.src_ip, e.method, e.path);
-                st.record_http(&e.src_ip, &e.path, tag);
-                (e.src_ip.clone(), tag.clone())
-            }
-        };
 
-        events_since_save += 1;
-        if events_since_save >= 10 {
-            stats::save(&stats_path, &st).await;
-            events_since_save = 0;
-        }
+                events_since_save += 1;
+                if events_since_save >= 10 {
+                    stats::save(&stats_path, &st).await;
+                    events_since_save = 0;
+                }
 
-        if alerter.record(&src_ip) {
-            let count = alerter.count(&src_ip);
-            eprintln!(
-                "\x1b[31m[⚠️  ALERTA]\x1b[0m IP {} disparou {} eventos em {}s!",
-                src_ip, count, window_secs
-            );
-            st.record_alert();
+                if alerter.record(&src_ip) {
+                    let count = alerter.count(&src_ip);
+                    eprintln!(
+                        "\x1b[31m[⚠️  ALERTA]\x1b[0m IP {} disparou {} eventos em {}s!",
+                        src_ip, count, window_secs
+                    );
+                    st.record_alert();
 
-            if !webhook_urls.is_empty() {
-                let payload = AlertPayload {
-                    src_ip: src_ip.clone(),
-                    event_count: count,
-                    window_secs,
-                    protocol: protocol.clone(),
-                };
-                let urls = webhook_urls.clone();
-                tokio::spawn(async move {
-                    send_all(&urls, payload).await;
-                });
-            }
+                    if !webhook_urls.is_empty() {
+                        let payload = AlertPayload {
+                            src_ip: src_ip.clone(),
+                            event_count: count,
+                            window_secs,
+                            protocol: protocol.clone(),
+                        };
+                        let urls = webhook_urls.clone();
+                        tokio::spawn(async move {
+                            send_all(&urls, payload).await;
+                        });
+                    }
 
-            if let (Some(token), Some(chat_id)) = (telegram_token.clone(), telegram_chat_id.clone()) {
-                let ip = src_ip.clone();
-                let proto = protocol.clone();
-                tokio::spawn(async move {
-                    telegram::send_alert(&token, &chat_id, &ip, count, window_secs, &proto).await;
-                });
+                    if let (Some(token), Some(chat_id)) = (telegram_token.clone(), telegram_chat_id.clone()) {
+                        let ip = src_ip.clone();
+                        let proto = protocol.clone();
+                        tokio::spawn(async move {
+                            telegram::send_alert(&token, &chat_id, &ip, count, window_secs, &proto).await;
+                        });
+                    }
+                }
             }
         }
     }
 
-    // Salva stats ao encerrar
+    // Salva stats ao encerrar (Ctrl+C ou canal fechado)
     stats::save(&stats_path, &st).await;
+    eprintln!("💾 Estatísticas salvas em {}", stats_path.display());
 }

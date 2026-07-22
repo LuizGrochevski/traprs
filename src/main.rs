@@ -11,7 +11,7 @@ mod webhook;
 use clap::Parser;
 use config::Config;
 use std::fs;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, oneshot};
 
 #[tokio::main]
 async fn main() {
@@ -33,6 +33,7 @@ async fn main() {
 
     let (tx, rx) = mpsc::unbounded_channel();
     let (broadcast_tx, _) = tokio::sync::broadcast::channel(256);
+    let (shutdown_tx, shutdown_rx) = oneshot::channel();
 
     // Dashboard WebSocket
     let dash_tx = broadcast_tx.clone();
@@ -42,8 +43,6 @@ async fn main() {
     });
 
     // Logger assíncrono
-    // Imprime stats e encerra se --stats foi passado como flag
-    // (verificamos se há argumento extra; aqui apenas mostramos ao iniciar)
     let log_path = cfg.log.clone();
     let stats_path = cfg.stats.clone();
     let threshold = cfg.alert_threshold;
@@ -52,8 +51,12 @@ async fn main() {
     let telegram_token = cfg.telegram_token.clone();
     let telegram_chat_id = cfg.telegram_chat_id.clone();
     let blog_tx = broadcast_tx.clone();
-    tokio::spawn(async move {
-        logger::run_logger(log_path, stats_path, rx, threshold, window, webhook_urls, telegram_token, telegram_chat_id, blog_tx).await;
+    let logger_handle = tokio::spawn(async move {
+        logger::run_logger(
+            log_path, stats_path, rx, threshold, window,
+            webhook_urls, telegram_token, telegram_chat_id,
+            blog_tx, shutdown_rx,
+        ).await;
     });
 
     // Honeypots em paralelo
@@ -78,7 +81,13 @@ async fn main() {
         honeypot::https::run(https_port, https_banner, https_tx).await;
     });
 
-    // Mantém o processo vivo
+    // Espera Ctrl+C
     tokio::signal::ctrl_c().await.expect("Falha ao escutar Ctrl+C");
-    println!("\n🛑 TrapRS encerrado.");
+    println!("\n🛑 Encerrando TrapRS... salvando estatísticas.");
+
+    // Avisa o logger pra salvar e sair, e espera ele terminar antes de fechar o processo
+    let _ = shutdown_tx.send(());
+    let _ = logger_handle.await;
+
+    println!("✅ TrapRS encerrado.");
 }
